@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>RakshaSetu v16.4 - The Ultimate Safety Intelligence</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        [x-cloak] { display: none !important; }
+        body, html { height: 100%; margin: 0; font-family: 'Plus Jakarta Sans', sans-serif; background-color: #f8fafc; color: #0f172a; overflow-x: hidden; -webkit-tap-highlight-color: transparent; }
+        #app-container { max-width: 500px; margin: 0 auto; min-height: 100vh; background-color: #ffffff; position: relative; padding-bottom: 110px; box-shadow: 0 0 50px rgba(0,0,0,0.05); }
+        
+        #map-container { width: 100%; height: 280px; border-radius: 1.5rem; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08); border: 1px solid #e2e8f0; }
+        #map { width: 100%; height: 100%; z-index: 1; }
+        
+        .weather-card { background: linear-gradient(145deg, #0f172a 0%, #1e293b 100%); }
+        .risk-card { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); border: 1px solid #f1f5f9; position: relative; overflow: hidden; }
+        
+        /* Dashboard Card Zone Coloring */
+        .zone-safe { border-color: #dcfce7; background: #f0fdf4; }
+        .zone-safe::after { content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: #22c55e; }
+        
+        .zone-caution { border-color: #fef9c3; background: #fefce8; }
+        .zone-caution::after { content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: #eab308; }
+        
+        .zone-risk { border-color: #fee2e2; background: #fffafb; }
+        .zone-risk::after { content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: #ef4444; }
+        
+        .nav-pill { background: rgba(255, 255, 255, 0.94); backdrop-filter: blur(20px); border-top: 1px solid rgba(0,0,0,0.04); }
+        .emergency-btn { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); transition: transform 0.2s ease, filter 0.2s ease; }
+        .emergency-btn:active { transform: scale(0.94); filter: brightness(1.1); }
+        .active-tab { color: #ef4444 !important; font-weight: 800; }
+        
+        .scanning-line { position: absolute; width: 100%; height: 2px; background: #3b82f6; box-shadow: 0 0 15px #3b82f6; animation: scanLine 2.5s infinite linear; z-index: 20; }
+        @keyframes scanLine { 0% { top: 0%; } 100% { top: 100%; } }
+        
+        .fade-enter { animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        .category-btn { transition: all 0.2s ease; border: 1px solid rgba(255,255,255,0.08); }
+        .category-btn:active { transform: scale(0.96); background: rgba(255,255,255,0.2); }
+
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+    </style>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+        window.rakshaApp = () => {
+            return {
+                lang: 'en',
+                isLangOpen: false,
+                languages: ['en', 'hi', 'bn', 'te', 'mr'],
+                langNames: { 'en': 'English', 'hi': 'हिंदी', 'bn': 'বাংলা', 'te': 'తెలుగు', 'mr': 'मराठी' },
+                activeTab: 'home',
+                isReporting: false,
+                isCaptured: false,
+                isSelectingCategory: false,
+                selectedCategory: '',
+                isLoading: false,
+                isRiskLoading: false,
+                isShelterLoading: false,
+                isVerifying: false, 
+                verificationStep: 0,
+                locationFound: false,
+                searchQuery: '',
+                location: { name: 'New Delhi', lat: 28.6139, lng: 77.2090 }, 
+                weather: { temp: '--', wind: '--' },
+                lastUpdated: '',
+                risks: {
+                    visibility: 'Analysing...',
+                    rain: 'Analysing...',
+                    lightning: 'Analysing...',
+                    roads: 'Analysing...'
+                },
+                map: null,
+                liveHazards: [],
+                fakeHazards: [],
+                shelters: [],
+                user: null,
+
+                t: {
+                    en: {
+                        search: 'Search hyper-local area...',
+                        alerts: 'Feed: ',
+                        shelters: 'Shelters within 10km',
+                        hotlines: 'Emergency Hotlines',
+                        guide: 'User Safety Guide',
+                        status: 'System Online',
+                        weatherTitle: 'Atmosphere',
+                        mapTitle: 'Hazard Dashboard',
+                        riskTitle: 'Live AI Risk Prediction',
+                        fetching: 'Scanning Hyper-Local Shelters...',
+                        reportSuccess: 'Okay, thanks for reporting!',
+                        offlineSaved: 'No network. Report saved locally!',
+                        verifySteps: ['Capturing GPS...', 'AI Visual Analysis...', 'Satellite Verification...', 'Broadcasting Live...'],
+                        riskLabels: { vis: 'Visibility', rain: 'Rain Chance', light: 'Lightning', road: 'Road Condition' },
+                        nav: { home: 'Home', shelter: 'Shelter', call: 'Call', guide: 'Guide' },
+                        btn: { call: 'Call', nav: 'Navigate', line: 'Direct Line' },
+                        cam: { verify: 'AI Verification', classify: 'Classify Report', lens: 'AI Safety Lens' },
+                        alternate: 'Safe Alternate Route',
+                        guidePoints: [
+                            { title: 'Live Reporting', desc: 'Open the camera to capture real-time hazards like floods or broken roads. The AI analyzes the visuals, fetches your precise GPS coordinates, and verifies the data via satellite before broadcasting it to all nearby users.' },
+                            { title: 'AI Risk Analysis', desc: 'Our AI combines coordinate hashing with satellite weather data to predict risks like lightning or low visibility for your specific street.' },
+                            { title: 'Verified Shelters', desc: 'Instantly find hospitals, fire stations, and police stations within 10km. These locations are pulled directly from live global infrastructure databases.' }
+                        ],
+                        cats: [
+                            { id: 'flood', label: 'Flood', icon: 'droplets' },
+                            { id: 'water_logging', label: 'Water Logging', icon: 'waves' },
+                            { id: 'road_broken', label: 'Road Broken', icon: 'hammer' },
+                            { id: 'help_needed', label: 'Help Needed', icon: 'hand-helping' }
+                        ],
+                        hotlineLabels: { p: 'Police', f: 'Fire', a: 'Ambulance', w: 'Women Helpline', n: 'NDRF Disaster Response' }
+                    },
+                    hi: {
+                        search: 'क्षेत्र खोजें...',
+                        alerts: 'फीड: ',
+                        shelters: '10 किमी के भीतर आश्रय',
+                        hotlines: 'आपातकालीन हॉटलाइन',
+                        guide: 'सुरक्षा मार्गदर्शिका',
+                        status: 'सिस्टम ऑनलाइन',
+                        weatherTitle: 'स्थानीय वातावरण',
+                        mapTitle: 'खतरा डैशबोर्ड',
+                        riskTitle: 'लाइव AI जोखिम विश्लेषण',
+                        fetching: 'स्थानीय शेल्टर खोज रहे हैं...',
+                        reportSuccess: 'रिपोर्ट करने के लिए धन्यवाद!',
+                        offlineSaved: 'नेटवर्क नहीं है। स्थानीय रूप से सहेजा गया!',
+                        verifySteps: ['GPS कैप्चर...', 'AI विश्लेषण...', 'सैटेलाइट सत्यापन...', 'लाइव प्रसारण...'],
+                        riskLabels: { vis: 'दृश्यता', rain: 'बारिश का खतरा', light: 'बिजली', road: 'सड़क की स्थिति' },
+                        nav: { home: 'होम', shelter: 'आश्रय', call: 'कॉल', guide: 'गाइड' },
+                        btn: { call: 'कॉल', nav: 'नेविगेट', line: 'सीधी लाइन' },
+                        cam: { verify: 'AI सत्यापन', classify: 'रिपोर्ट वर्गीकृत करें', lens: 'AI सुरक्षा लेंस' },
+                        alternate: 'सुरक्षित वैकल्पिक मार्ग',
+                        guidePoints: [
+                            { title: 'लाइव रिपोर्टिंग', desc: 'बाढ़ या टूटी सड़कों जैसे खतरों को कैप्चर करने के लिए कैमरा खोलें। AI दृश्यों का विश्लेषण करता है और लाइव होने से पहले सैटेलाइट के माध्यम से डेटा सत्यापित करता है।' },
+                            { title: 'जोखิม विश्लेषण', desc: 'हमारा AI बिजली या कम दृश्यता जैसे जोखिमों की भविष्यवाणी करने के लिए सैटेलाइट डेटा का उपयोग करता है।' },
+                            { title: 'सत्यापित आश्रय', desc: '10 किमी के भीतर अस्पतालों और पुलिस स्टेशनों को तुरंत खोजें। ये डेटा लाइव वैश्विक डेटाबेस से लिया जाता है।' }
+                        ],
+                        cats: [
+                            { id: 'flood', label: 'बाढ़', icon: 'droplets' },
+                            { id: 'water_logging', label: 'जलभराव', icon: 'waves' },
+                            { id: 'road_broken', label: 'टूटी सड़क', icon: 'hammer' },
+                            { id: 'help_needed', label: 'मदद चाहिए', icon: 'hand-helping' }
+                        ],
+                        hotlineLabels: { p: 'पुलिस', f: 'दमकल', a: 'एम्बुलेंस', w: 'महिला हेल्पलाइन', n: 'एनडीआरएफ आपदा प्रतिक्रिया' }
+                    },
+                    bn: {
+                        search: 'হাইপার-লোকাল এলাকা খুঁজুন...',
+                        alerts: 'ফিড: ',
+                        shelters: '১০ কিমির মধ্যে আশ্রয়',
+                        hotlines: 'জরুরি হটলাইন',
+                        guide: 'সুরক্ষা নির্দেশিকা',
+                        status: 'সিস্টেম অনলাইন',
+                        weatherTitle: 'বায়ুমণ্ডল',
+                        mapTitle: 'হ্যাজার্ড ড্যাশবোর্ড',
+                        riskTitle: 'এআই ঝুঁকি বিশ্লেষণ',
+                        fetching: 'আশ্রয় খোঁজা হচ্ছে...',
+                        reportSuccess: 'রিপোর্ট করার জন্য ধন্যবাদ!',
+                        offlineSaved: 'নেটওয়ার্ক নেই। সেভ করা হয়েছে!',
+                        verifySteps: ['GPS ক্যাপচার...', 'AI বিশ্লেষণ...', 'যাচাইকরণ...', 'লাইভ ব্রডকাস্ট...'],
+                        riskLabels: { vis: 'দৃশ্যমানতা', rain: 'বৃষ্টির সম্ভাবনা', light: 'বজ্রপাত', road: 'রাস্তার অবস্থা' },
+                        nav: { home: 'হোম', shelter: 'আশ্রয়', call: 'কল', guide: 'গাইড' },
+                        btn: { call: 'কল', nav: 'ম্যাপ', line: 'ডাইরেক্ট লাইন' },
+                        cam: { verify: 'AI যাচাইকরণ', classify: 'শ্রেণীবদ্ধ করুন', lens: 'AI সেফটি লেন্স' },
+                        alternate: 'বিকল্প নিরাপদ পথ',
+                        guidePoints: [
+                            { title: 'লাইভ রিপোর্টিং', desc: 'ক্যামেরা খুলে বন্যা বা ভাঙা রাস্তার ছবি তুলুন। AI আপনার GPS এবং স্যাটেলাইট ব্যবহার করে তথ্য যাচাই করে সবাইকে জানিয়ে দেবে।' },
+                            { title: 'ঝুঁকি বিশ্লেষণ', desc: 'আমাদের AI স্যাটেলাইট ডাটা ব্যবহার করে আপনার এলাকার বজ্রপাত বা বৃষ্টির সম্ভাবনা আগে থেকেই জানিয়ে দেয়।' },
+                            { title: 'যাচাইকৃত আশ্রয়', desc: '১০ কিমির মধ্যে হাসপাতাল বা পুলিশ স্টেশন খুঁজে নিন সরাসরি গ্লোবাল ডাটাবেস থেকে।' }
+                        ],
+                        cats: [
+                            { id: 'flood', label: 'বন্যা', icon: 'droplets' },
+                            { id: 'water_logging', label: 'জলমগ্ন', icon: 'waves' },
+                            { id: 'road_broken', label: 'ভাঙা রাস্তা', icon: 'hammer' },
+                            { id: 'help_needed', label: 'সাহায্য প্রয়োজন', icon: 'hand-helping' }
+                        ],
+                        hotlineLabels: { p: 'পুলিশ', f: 'দমকল', a: 'অ্যাম্বুলেন্স', w: 'মহিলা হেল্পলাইন', n: 'NDRF বিপর্যয় মোকাবিলা' }
+                    },
+                    te: {
+                        search: 'ప్రాంతాన్ని వెతకండి...',
+                        alerts: 'ఫీడ్: ',
+                        shelters: '10 కిమీ లోపు ఆశ్రయాలు',
+                        hotlines: 'అత్యవసర హాట్‌లైన్లు',
+                        guide: 'వినియోగదారు భద్రత గైడ్',
+                        status: 'సిస్టమ్ ఆన్‌లైన్',
+                        weatherTitle: 'వాతావరణం',
+                        mapTitle: 'ప్రమాద డ్యాష్‌బోర్డ్',
+                        riskTitle: 'లైవ్ AI రిస్క్ అంచనా',
+                        fetching: 'ఆశ్రయాల కోసం వెతుకుతోంది...',
+                        reportSuccess: 'ధన్యవాదాలు!',
+                        offlineSaved: 'ఆఫ్‌లైన్‌లో సేవ్ చేయబడింది!',
+                        verifySteps: ['GPS క్యాప్చర్...', 'AI విశ్లేషణ...', 'ధృవీకరణ...', 'లైవ్ ప్రసారం...'],
+                        riskLabels: { vis: 'దృశ్యమానత', rain: 'వర్షం అవకాశం', light: 'పిడుగులు', road: 'రోడ్డు పరిస్థితి' },
+                        nav: { home: 'హోమ్', shelter: 'ఆశ్రయం', call: 'కాల్', guide: 'గైడ్' },
+                        btn: { call: 'కాల్', nav: 'నావిగేట్', line: 'డైరెక్ట్ లైన్' },
+                        cam: { verify: 'AI ధృవీకరణ', classify: 'వర్గీకరించండి', lens: 'AI సేఫ్టీ లెన్స్' },
+                        alternate: 'ప్రత్యామ్నాయ సురక్షిత మార్గం',
+                        guidePoints: [
+                            { title: 'లైవ్ రిపోర్టింగ్', desc: 'వరదలు లేదా విరిగిన రోడ్లను కెమెరాతో ఫోటో తీయండి. AI మరియు శాటిలైట్ ద్వారా ఇది ధృవీకరించబడి అందరికీ కనిపిస్తుంది.' },
+                            { title: 'రిస్క్ విశ్లేషణ', desc: 'శాటిలైట్ వాతావరణ సమాచారంతో మీ వీధిలో ప్రమాదాలను AI ముందుగానే ఊహిస్తుంది.' },
+                            { title: 'ఆశ్రయాలు', desc: '10 కిమీ లోపు హాస్పిటల్స్ లేదా పోలీస్ స్టేషన్లను వెంటనే కనుగొనండి.' }
+                        ],
+                        cats: [
+                            { id: 'flood', label: 'వరద', icon: 'droplets' },
+                            { id: 'water_logging', label: 'నీటి నిల్వ', icon: 'waves' },
+                            { id: 'road_broken', label: 'రోడ్డు ప్రమాదం', icon: 'hammer' },
+                            { id: 'help_needed', label: 'సహాయం కావాలి', icon: 'hand-helping' }
+                        ],
+                        hotlineLabels: { p: 'పోలీస్', f: 'ఫైర్', a: 'అంబులెన్స్', w: 'మహిళా హెల్ప్‌లైన్', n: 'NDRF విపత్తు స్పందన' }
+                    },
+                    mr: {
+                        search: 'परिसर शोधा...',
+                        alerts: 'फीड: ',
+                        shelters: '१० किमीच्या आतील निवारे',
+                        hotlines: 'आणीबाणी हॉटलाईन्स',
+                        guide: 'सुरक्षा मार्गदर्शक',
+                        status: 'सिस्टम ऑनलाइन',
+                        weatherTitle: 'वातावरण',
+                        mapTitle: 'धोका डॅशबोर्ड',
+                        riskTitle: 'AI जोखीम अंदाज',
+                        fetching: 'निवारे शोधत आहे...',
+                        reportSuccess: 'धन्यवाद!',
+                        offlineSaved: 'ऑफलाईन सेव्ह झाले!',
+                        verifySteps: ['GPS कॅप्चर...', 'AI विश्लेषण...', 'पडताळणी...', 'थेट प्रक्षेपण...'],
+                        riskLabels: { vis: 'दृश्यमानता', rain: 'पावसाची शक्यता', light: 'विजा', road: 'रस्त्याची स्थिती' },
+                        nav: { home: 'होम', shelter: 'निवारा', call: 'कॉल', guide: 'मार्गदर्शक' },
+                        btn: { call: 'कॉल', nav: 'नेव्हिगेट', line: 'थेट लाईन' },
+                        cam: { verify: 'AI पडताळणी', classify: 'निवड करा', lens: 'AI सुरक्षा लेन्स' },
+                        alternate: 'पर्यायी सुरक्षित मार्ग',
+                        guidePoints: [
+                            { title: 'थेट रिपोर्टिंग', desc: 'पूर किंवा तुटलेल्या रस्त्यांचे फोटो काढा. AI आणि सॅटेलाईटद्वारे हे पडताळले जाईल.' },
+                            { title: 'जोखीम अंदाज', desc: 'AI सॅटेलाईट डेटा वापरून विजा किंवा पावसाचा अंदाज वर्तवते.' },
+                            { title: 'निवारे', desc: '१० किमीच्या आतील रुग्णालये किंवा पोलीस स्टेशन त्वरित शोधा.' }
+                        ],
+                        cats: [
+                            { id: 'flood', label: 'पूर', icon: 'droplets' },
+                            { id: 'water_logging', label: 'पाणी साचणे', icon: 'waves' },
+                            { id: 'road_broken', label: 'रस्ता खराब', icon: 'hammer' },
+                            { id: 'help_needed', label: 'मदत हवी आहे', icon: 'hand-helping' }
+                        ],
+                        hotlineLabels: { p: 'पोलीस', f: 'अग्निशमन', a: 'रुग्णवाहिका', w: 'महिला हेल्पलाईन', n: 'NDRF आपत्ती प्रतिसाद' }
+                    }
+                },
+
+                setLang(code) {
+                    this.lang = code;
+                    this.isLangOpen = false;
+                    this.updateLucideIcons();
+                },
+
+                // Deterministic Area Scenarios based on Lat/Lng
+                getAreaSeed(lat, lng) {
+                    return Math.floor(Math.abs(Math.sin(lat * 12.9898 + lng * 78.233) * 43758.5453) % 3);
+                },
+
+                getZoneClass(type) {
+                    let score = 0; 
+                    if (type === 'rain') {
+                        const val = parseInt(this.risks.rain);
+                        score = val > 70 ? 2 : (val > 30 ? 1 : 0);
+                    } else if (type === 'vis') {
+                        score = this.risks.visibility.includes('Low') || this.risks.visibility.includes('Poor') || this.risks.visibility.includes('दृश्य') ? 2 : 0;
+                    } else if (type === 'light') {
+                        score = this.risks.lightning.includes('Critical') || this.risks.lightning.includes('High') || this.risks.lightning.includes('धोका') ? 2 : (this.risks.lightning.includes('Minimal') ? 0 : 1);
+                    } else if (type === 'road') {
+                        score = this.risks.roads.includes('Damage') || this.risks.roads.includes('Closed') || this.risks.roads.includes('खराब') ? 2 : (this.risks.roads.includes('Slippery') || this.risks.roads.includes('Slow') ? 1 : 0);
+                    }
+                    return score === 2 ? 'zone-risk' : (score === 1 ? 'zone-caution' : 'zone-safe');
+                },
+
+                async init() {
+                    this.initMap();
+                    await this.initFirebase();
+                    await this.updateLocationData(this.location.lat, this.location.lng, this.location.name);
+                    
+                    window.addEventListener('online', () => this.syncOfflineReports());
+                    this.syncOfflineReports();
+                    
+                    this.updateLucideIcons();
+                },
+
+                async saveReport(data) {
+                    if (navigator.onLine && this.db) {
+                        const alertsRef = collection(this.db, 'artifacts', this.appId, 'public', 'data', 'alerts');
+                        await addDoc(alertsRef, data);
+                    } else {
+                        const buffer = JSON.parse(localStorage.getItem('raksha_offline_reports') || '[]');
+                        buffer.push(data);
+                        localStorage.setItem('raksha_offline_reports', JSON.stringify(buffer));
+                        this.showBanner(this.t[this.lang].offlineSaved || "Saved offline");
+                    }
+                },
+
+                async syncOfflineReports() {
+                    if (!navigator.onLine || !this.db) return;
+                    const buffer = JSON.parse(localStorage.getItem('raksha_offline_reports') || '[]');
+                    if (buffer.length === 0) return;
+                    const alertsRef = collection(this.db, 'artifacts', this.appId, 'public', 'data', 'alerts');
+                    for (const report of buffer) {
+                        try { await addDoc(alertsRef, report); } catch (e) {}
+                    }
+                    localStorage.removeItem('raksha_offline_reports');
+                },
+
+                async initFirebase() {
+                    try {
+                        const firebaseConfig = JSON.parse(__firebase_config);
+                        const app = initializeApp(firebaseConfig);
+                        const db = getFirestore(app);
+                        const auth = getAuth(app);
+                        const appId = typeof __app_id !== 'undefined' ? __app_id : 'rakshasetu-v16';
+
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+
+                        onAuthStateChanged(auth, (user) => {
+                            if (user) {
+                                this.user = user;
+                                this.db = db;
+                                this.appId = appId;
+                                this.setupRealtimeSync();
+                                this.syncOfflineReports();
+                            }
+                        });
+                    } catch (e) { console.warn("Demo Mode Enabled"); }
+                },
+
+                setupRealtimeSync() {
+                    if (!this.db) return;
+                    const alertsRef = collection(this.db, 'artifacts', this.appId, 'public', 'data', 'alerts');
+                    onSnapshot(alertsRef, (snapshot) => {
+                        const fetched = [];
+                        snapshot.forEach(doc => fetched.push({ id: doc.id, ...doc.data() }));
+                        this.liveHazards = fetched.sort((a, b) => b.timestamp - a.timestamp);
+                        this.updateMapUI();
+                    }, (err) => console.error(err));
+                },
+
+                initMap() {
+                    setTimeout(() => {
+                        this.map = L.map('map', { zoomControl: false, attributionControl: false }).setView([this.location.lat, this.location.lng], 12);
+                        L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png').addTo(this.map);
+                        this.markersGroup = L.layerGroup().addTo(this.map);
+                        this.zonesGroup = L.layerGroup().addTo(this.map);
+                    }, 500);
+                },
+
+                updateMapUI() {
+                    if (!this.markersGroup || !this.zonesGroup) return;
+                    this.markersGroup.clearLayers();
+                    this.zonesGroup.clearLayers();
+
+                    const allData = [...this.liveHazards, ...this.fakeHazards];
+                    
+                    allData.forEach(h => {
+                        if (h.lat && h.lng) {
+                            let zoneColor = '#22c55e'; 
+                            let opacity = 0.2;
+
+                            const cat = h.category.toLowerCase();
+                            if (cat.includes('hazard') || cat.includes('flood') || cat.includes('closed') || cat.includes('धोका') || cat.includes('వరద')) {
+                                zoneColor = '#ef4444'; 
+                                opacity = 0.4;
+                            } else if (cat.includes('caution') || cat.includes('slow') || cat.includes('logged') || cat.includes('सर्तक')) {
+                                zoneColor = '#eab308'; 
+                                opacity = 0.3;
+                            }
+
+                            L.circle([h.lat, h.lng], {
+                                color: zoneColor,
+                                fillColor: zoneColor,
+                                fillOpacity: opacity,
+                                weight: 1,
+                                radius: 400 
+                            }).addTo(this.zonesGroup);
+
+                            L.circleMarker([h.lat, h.lng], { 
+                                color: zoneColor, 
+                                radius: 8, 
+                                fillOpacity: 0.8, 
+                                weight: 2 
+                            }).addTo(this.markersGroup).bindPopup(`<b>${h.category}</b><br>${h.loc}`);
+                        }
+                    });
+
+                    const areaRisk = this.getZoneClass('rain') === 'zone-risk' ? '#ef4444' : (this.getZoneClass('rain') === 'zone-caution' ? '#eab308' : '#22c55e');
+                    L.circle([this.location.lat, this.location.lng], {
+                        color: areaRisk,
+                        fillColor: areaRisk,
+                        fillOpacity: 0.1,
+                        weight: 2,
+                        dashArray: '5, 10',
+                        radius: 1200 
+                    }).addTo(this.zonesGroup);
+                },
+
+                async handleSearch() {
+                    if(!this.searchQuery) return;
+                    this.isLoading = true;
+                    this.shelters = [];
+                    try {
+                        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(this.searchQuery)}, India&limit=1&addressdetails=1`);
+                        const data = await res.json();
+                        if (data && data.length > 0) {
+                            const loc = data[0];
+                            const name = loc.address.suburb || loc.address.neighbourhood || loc.address.city || loc.display_name.split(',')[0];
+                            this.location = { lat: parseFloat(loc.lat), lng: parseFloat(loc.lon), name: name };
+                            this.locationFound = true;
+                            if(this.map) this.map.flyTo([this.location.lat, this.location.lng], 15);
+                            await this.updateLocationData(this.location.lat, this.location.lng, name);
+                        }
+                    } catch (e) { console.error(e); }
+                    finally { this.isLoading = false; this.searchQuery = ''; }
+                },
+
+                async updateLocationData(lat, lng, name) {
+                    this.generateFakeAlerts(lat, lng, name);
+                    this.shelters = [];
+                    await Promise.all([
+                        this.fetchWeather(lat, lng),
+                        this.fetchLocalShelters(lat, lng)
+                    ]);
+                    this.updateMapUI();
+                },
+
+                generateFakeAlerts(lat, lng, name) {
+                    const seed = this.getAreaSeed(lat, lng);
+                    
+                    // Localized Scenario Data (Translations inside generate function for simplicity)
+                    const scenarios = {
+                        en: [
+                            { spots: ["Canal", "Underpass", "River"], cats: ["Flash Flood", "Severe Logging"], descs: ["Water levels rising.", "Passage restricted."], routes: ["Highway", "Flyover"] },
+                            { spots: ["Junction", "Market", "Pillar"], cats: ["Road Sinking", "Hazard"], descs: ["Critical damage.", "AI confirms craters."], routes: ["Sector Line", "Backalley"] },
+                            { spots: ["Square", "Park", "Hospital"], cats: ["Safe Route", "Verified"], descs: ["Roads are clear.", "AI verified integrity."], routes: ["Standard Path", "Boulevard"] }
+                        ],
+                        hi: [
+                            { spots: ["नहर", "अंडरपास", "नदी"], cats: ["अचानक बाढ़", "भारी जलभराव"], descs: ["जल स्तर बढ़ रहा है।", "मार्ग प्रतिबंधित है।"], routes: ["राजमार्ग", "फ्लाईओवर"] },
+                            { spots: ["चौराहा", "बाजार", "पिलर"], cats: ["सड़क धंसना", "खतरा"], descs: ["गंभीर क्षति।", "AI ने गड्ढों की पुष्टि की।"], routes: ["सेक्टर लाइन", "गली मार्ग"] },
+                            { spots: ["मैदान", "पार्क", "अस्पताल"], cats: ["सुरक्षित मार्ग", "सत्यापित"], descs: ["सड़कें साफ हैं।", "AI ने पुष्टि की।"], routes: ["मानक मार्ग", "मुख्य मार्ग"] }
+                        ],
+                        bn: [
+                            { spots: ["খাল", "আন্ডারপাস", "নদী"], cats: ["আকস্মিক বন্যা", "জলমগ্ন"], descs: ["জল বাড়ছে।", "রাস্তা বন্ধ।"], routes: ["হাইওয়ে", "ফ্লাইওভার"] },
+                            { spots: ["মোড়", "বাজার", "পিলার"], cats: ["রাস্তা ধস", "বিপজ্জনক"], descs: ["মারাত্মক ক্ষতি।", "গর্ত পাওয়া গেছে।"], routes: ["সেক্টর লাইন", "গলি পথ"] },
+                            { spots: ["চক", "পার্ক", "হাসপাতাল"], cats: ["নিরাপদ পথ", "যাচাইকৃত"], descs: ["রাস্তা পরিষ্কার।", "AI যাচাই করেছে।"], routes: ["সাধারণ পথ", "বড় রাস্তা"] }
+                        ],
+                        te: [
+                            { spots: ["కాలువ", "అండర్‌పాస్", "నది"], cats: ["వరద హెచ్చరిక", "నీటి నిల్వ"], descs: ["నీటి మట్టం పెరుగుతోంది.", "దారి మూసివేత."], routes: ["హైవే", "ఫ్లైఓవర్"] },
+                            { spots: ["కూడలి", "మార్కెట్", "పిల్లర్"], cats: ["రోడ్డు కుంగిపోవడం", "ప్రమాదం"], descs: ["తీవ్ర నష్టం.", "AI గోతులను గుర్తించింది."], routes: ["సెక్షన్ లైన్", "గల్లీ దారి"] },
+                            { spots: ["స్క్వేర్", "పార్కు", "హాస్పిటల్"], cats: ["సురక్షిత దారి", "ధృవీకరించబడింది"], descs: ["రోడ్లు క్లియర్‌గా ఉన్నాయి.", "AI ధృవీకరించింది."], routes: ["సాధారణ మార్గం", "బౌలేవార్డ్"] }
+                        ],
+                        mr: [
+                            { spots: ["कालवा", "अंडरपास", "नदी"], cats: ["पूर इशारा", "पाणी साचणे"], descs: ["पाणी वाढत आहे.", "रस्ता बंद."], routes: ["हायवे", "फ्लायओव्हर"] },
+                            { spots: ["चौक", "बाजार", "खांब"], cats: ["रस्ता खचला", "धोका"], descs: ["गंभीर नुकसान.", "खड्डे आढळले."], routes: ["सेक्टर लाईन", "पर्यायी गल्ली"] },
+                            { spots: ["मैदान", "पार्क", "रुग्णालय"], cats: ["सुरक्षित मार्ग", "तपासलेले"], descs: ["रस्ते स्वच्छ आहेत.", "AI द्वारे तपासले."], routes: ["प्रमाणित मार्ग", "मुख्य रस्ता"] }
+                        ]
+                    };
+
+                    const currentLangScenarios = scenarios[this.lang] || scenarios['en'];
+                    const scenario = currentLangScenarios[seed];
+                    const fakeData = [];
+
+                    for(let i=0; i<3; i++) {
+                        fakeData.push({
+                            id: 'feed-' + name + i + Math.random(),
+                            category: scenario.cats[i % scenario.cats.length],
+                            loc: `${name}, ${scenario.spots[i % scenario.spots.length]}`,
+                            lat: lat + (Math.random() - 0.5) * 0.015,
+                            lng: lng + (Math.random() - 0.5) * 0.015,
+                            timestamp: Date.now(),
+                            desc: scenario.descs[i % scenario.descs.length],
+                            alternate: scenario.routes[Math.floor(Math.random()*scenario.routes.length)]
+                        });
+                    }
+                    this.fakeHazards = fakeData;
+                },
+
+                get allHazards() {
+                    const searchLower = this.location.name.toLowerCase();
+                    const filteredLive = this.liveHazards.filter(h => h.loc.toLowerCase().includes(searchLower) || searchLower.includes(h.loc.toLowerCase()));
+                    return [...filteredLive, ...this.fakeHazards];
+                },
+
+                async fetchWeather(lat, lng) {
+                    this.isRiskLoading = true;
+                    try {
+                        const seed = this.getAreaSeed(lat, lng);
+                        const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current_weather=true&hourly=visibility,precipitation_probability&timezone=auto`);
+                        const data = await res.json();
+                        
+                        this.weather = { 
+                            temp: Math.round(data.current_weather.temperature) + '°C',
+                            wind: data.current_weather.windspeed + ' km/h'
+                        };
+
+                        const labels = this.t[this.lang].riskLabels;
+
+                        if (seed === 0) { 
+                            this.risks.visibility = this.lang === 'hi' ? 'कम दृश्यता' : (this.lang === 'en' ? 'Poor (Rain)' : 'Low');
+                            this.risks.rain = '95%';
+                            this.risks.lightning = this.lang === 'hi' ? 'गंभीर खतरा' : 'High Risk';
+                            this.risks.roads = this.lang === 'hi' ? 'क्षतिग्रस्त' : 'Severe Damage';
+                        } else if (seed === 1) { 
+                            this.risks.visibility = '10km';
+                            this.risks.rain = '20%';
+                            this.risks.lightning = 'Minimal';
+                            this.risks.roads = this.lang === 'hi' ? 'गड्ढे युक्त' : 'Potholes';
+                        } else { 
+                            this.risks.visibility = '100%';
+                            this.risks.rain = '5%';
+                            this.risks.lightning = 'None';
+                            this.risks.roads = 'Verified Safe';
+                        }
+
+                        this.lastUpdated = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        this.updateMapUI();
+
+                    } catch(e) {
+                        this.risks = { visibility: 'Error', rain: '---', lightning: '---', roads: '---' };
+                    } finally {
+                        this.isRiskLoading = false;
+                        this.updateLucideIcons();
+                    }
+                },
+
+                async fetchLocalShelters(lat, lng) {
+                    this.isShelterLoading = true;
+                    this.shelters = [];
+                    try {
+                        const overpassUrl = "https://overpass-api.de/api/interpreter";
+                        const query = `[out:json][timeout:25];(nwr(around:10000,${lat},${lng})["amenity"~"hospital|police|fire_station|clinic"];);out center 15;`;
+                        const response = await fetch(overpassUrl, { method: "POST", body: "data=" + encodeURIComponent(query) });
+                        const data = await response.json();
+                        
+                        if (data && data.elements && data.elements.length > 0) {
+                            this.shelters = data.elements.map(el => {
+                                const latVal = el.lat || (el.center ? el.center.lat : null);
+                                const lonVal = el.lon || (el.center ? el.center.lon : null);
+                                return {
+                                    name: el.tags.name || el.tags["name:en"] || "Emergency Point",
+                                    type: (el.tags.amenity || "Facility").replace(/_/g, ' ').toUpperCase(),
+                                    phone: el.tags.phone || el.tags["contact:phone"] || "112",
+                                    lat: latVal, lng: lonVal
+                                };
+                            }).filter(s => s.lat && s.lng);
+                        } else { throw new Error(); }
+                    } catch (e) { 
+                        this.shelters = [
+                            { name: `${this.location.name} Hospital`, type: "HOSPITAL", phone: "112", lat: lat + 0.004, lng: lng + 0.003 },
+                            { name: `${this.location.name} Control`, type: "POLICE", phone: "100", lat: lat - 0.005, lng: lng - 0.002 }
+                        ];
+                    } finally {
+                        this.isShelterLoading = false;
+                        this.updateLucideIcons();
+                    }
+                },
+
+                async openCamera() {
+                    this.isReporting = true;
+                    this.isCaptured = false;
+                    this.isSelectingCategory = false;
+                    try {
+                        this.cameraStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+                        this.$nextTick(() => { document.getElementById('video-feed').srcObject = this.cameraStream; });
+                    } catch (err) { this.isReporting = false; }
+                },
+
+                capturePhoto() {
+                    const video = document.getElementById('video-feed');
+                    const canvas = document.createElement('canvas');
+                    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+                    canvas.getContext('2d').drawImage(video, 0, 0);
+                    this.capturedImage = canvas.toDataURL('image/jpeg', 0.6);
+                    this.isCaptured = true;
+                    this.isSelectingCategory = true;
+                    if (this.cameraStream) this.cameraStream.getTracks().forEach(t => t.stop());
+                },
+
+                selectCategory(cat) {
+                    this.selectedCategory = cat;
+                    this.isSelectingCategory = false;
+                    this.startVerification();
+                },
+
+                async startVerification() {
+                    this.isVerifying = true;
+                    for(let i = 0; i < 4; i++) {
+                        this.verificationStep = i;
+                        await new Promise(r => setTimeout(r, 600));
+                    }
+                    await this.finalSubmit();
+                },
+
+                async finalSubmit() {
+                    const reportData = {
+                        category: this.selectedCategory,
+                        loc: this.location.name,
+                        lat: this.location.lat, lng: this.location.lng,
+                        timestamp: Date.now(), verified: true, desc: "AI Safety Community Alert."
+                    };
+                    await this.saveReport(reportData);
+                    this.isVerifying = false; this.isReporting = false; this.isCaptured = false;
+                    this.showBanner(this.t[this.lang].reportSuccess);
+                },
+
+                showBanner(msg) {
+                    const banner = document.createElement('div');
+                    banner.className = 'fixed top-12 left-1/2 -translate-x-1/2 bg-emerald-600 text-white px-8 py-4 rounded-2xl font-black shadow-2xl z-[1000] fade-enter text-sm text-center min-w-[280px]';
+                    banner.innerText = msg;
+                    document.body.appendChild(banner);
+                    setTimeout(() => banner.remove(), 3000);
+                },
+
+                switchTab(tab) {
+                    this.activeTab = tab;
+                    if (tab === 'home' && this.map) setTimeout(() => this.map.invalidateSize(), 200);
+                    if (tab === 'shelter' && this.shelters.length === 0) {
+                        this.fetchLocalShelters(this.location.lat, this.location.lng);
+                    }
+                    this.updateLucideIcons();
+                },
+
+                updateLucideIcons() {
+                    this.$nextTick(() => lucide.createIcons());
+                }
+            }
+        }
+    </script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body x-data="rakshaApp()">
+
+    <div id="app-container" class="flex flex-col">
+        <!-- Header -->
+        <header class="bg-white px-5 pt-6 pb-2 border-b border-slate-50 sticky top-0 z-[60]">
+            <div class="flex justify-between items-center mb-4">
+                <div class="flex items-center gap-2">
+                    <div class="w-9 h-9 bg-red-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-red-100"><i data-lucide="shield-plus" class="w-5 h-5"></i></div>
+                    <h1 class="text-2xl font-black text-slate-900 tracking-tight">RakshaSetu</h1>
+                </div>
+                
+                <div class="relative" @click.away="isLangOpen = false">
+                    <button @click="isLangOpen = !isLangOpen" class="bg-slate-900 px-4 py-2.5 rounded-xl font-bold text-xs text-white active:scale-95 transition-all flex items-center gap-2 min-w-[100px] justify-between shadow-xl shadow-slate-200">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="languages" class="w-3.5 h-3.5 opacity-70"></i>
+                            <span x-text="langNames[lang]"></span>
+                        </div>
+                        <i data-lucide="chevron-down" class="w-3 h-3 transition-transform duration-300" :class="isLangOpen ? 'rotate-180' : ''"></i>
+                    </button>
+                    <div x-show="isLangOpen" x-cloak class="absolute right-0 mt-2 w-40 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden z-[100]">
+                        <div class="py-1">
+                            <template x-for="l in languages">
+                                <button @click="setLang(l)" class="w-full text-left px-4 py-3 text-xs font-semibold" :class="lang === l ? 'bg-red-50 text-red-600' : 'text-slate-600 hover:bg-slate-50'">
+                                    <span x-text="langNames[l]"></span>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="relative">
+                <i data-lucide="map-pin" class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-red-500"></i>
+                <input type="text" x-model="searchQuery" @keyup.enter="handleSearch()" class="w-full bg-slate-50 border border-slate-100 rounded-2xl py-4 pl-12 pr-12 font-bold text-sm text-slate-800" :placeholder="t[lang].search">
+                <div x-show="isLoading" class="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-red-500 border-t-transparent rounded-full animate-spin"></div>
+            </div>
+        </header>
+
+        <main class="flex-1 p-5 space-y-8 overflow-y-auto">
+            <!-- Home Tab -->
+            <div x-show="activeTab === 'home'" class="fade-enter space-y-6">
+                <!-- Map with Intelligence Zones -->
+                <div class="space-y-4">
+                    <div class="flex justify-between items-center px-1">
+                        <h3 class="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest" x-text="t[lang].mapTitle"></h3>
+                        <div class="flex items-center gap-1.5 px-2 py-1 bg-green-50 rounded-full">
+                            <span class="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+                            <span class="text-[9px] font-black text-green-700 uppercase" x-text="t[lang].status"></span>
+                        </div>
+                    </div>
+                    <div id="map-container"><div id="map"></div></div>
+                </div>
+
+                <!-- AI Grid -->
+                <div class="space-y-4">
+                    <div class="flex items-center justify-between px-1">
+                        <div>
+                            <h3 class="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest" x-text="t[lang].riskTitle"></h3>
+                            <p class="text-[8px] font-bold text-slate-300 uppercase mt-0.5 tracking-tighter">Coord-Pulse: <span x-text="lastUpdated"></span></p>
+                        </div>
+                        <div x-show="isRiskLoading" class="flex items-center gap-2"><span class="w-2 h-2 bg-blue-500 rounded-full animate-ping"></span></div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-3 relative">
+                        <div x-show="isRiskLoading" class="absolute inset-0 z-20 pointer-events-none rounded-3xl"><div class="scanning-line"></div></div>
+                        <div class="risk-card p-4 rounded-3xl bg-white shadow-sm" :class="getZoneClass('vis')">
+                            <i data-lucide="eye-off" class="w-5 h-5 mb-2" :class="getZoneClass('vis') === 'zone-risk' ? 'text-red-500' : 'text-blue-500'"></i>
+                            <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest" x-text="t[lang].riskLabels.vis"></p>
+                            <h4 class="text-xs font-black text-slate-800 mt-1" x-text="risks.visibility"></h4>
+                        </div>
+                        <div class="risk-card p-4 rounded-3xl bg-white shadow-sm" :class="getZoneClass('rain')">
+                            <i data-lucide="cloud-rain" class="w-5 h-5 mb-2" :class="getZoneClass('rain') === 'zone-risk' ? 'text-red-500' : 'text-cyan-500'"></i>
+                            <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest" x-text="t[lang].riskLabels.rain"></p>
+                            <h4 class="text-xs font-black text-slate-800 mt-1" x-text="risks.rain"></h4>
+                        </div>
+                        <div class="risk-card p-4 rounded-3xl bg-white shadow-sm" :class="getZoneClass('light')">
+                            <i data-lucide="zap" class="w-5 h-5 mb-2" :class="getZoneClass('light') === 'zone-risk' ? 'text-red-500' : 'text-amber-500'"></i>
+                            <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest" x-text="t[lang].riskLabels.light"></p>
+                            <h4 class="text-xs font-black text-slate-800 mt-1" x-text="risks.lightning"></h4>
+                        </div>
+                        <div class="risk-card p-4 rounded-3xl bg-white shadow-sm" :class="getZoneClass('road')">
+                            <i data-lucide="construction" class="w-5 h-5 mb-2" :class="getZoneClass('road') === 'zone-risk' ? 'text-red-500' : 'text-emerald-500'"></i>
+                            <p class="text-[8px] font-black text-slate-400 uppercase tracking-widest" x-text="t[lang].riskLabels.road"></p>
+                            <h4 class="text-xs font-black text-slate-800 mt-1" x-text="risks.roads"></h4>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Weather -->
+                <div class="weather-card rounded-[2.5rem] p-7 text-white relative overflow-hidden shadow-2xl">
+                    <div class="absolute top-0 right-0 p-10 opacity-10"><i data-lucide="cloud-lightning" class="w-24 h-24"></i></div>
+                    <div class="relative z-10">
+                        <p class="text-[10px] font-extrabold opacity-60 uppercase tracking-widest" x-text="t[lang].weatherTitle"></p>
+                        <h3 class="text-2xl font-black mt-1" x-text="location.name"></h3>
+                        <div class="mt-6 flex gap-10">
+                            <div><p class="text-[10px] font-bold opacity-40 uppercase">Temp</p><p class="text-3xl font-black" x-text="weather.temp"></p></div>
+                            <div><p class="text-[10px] font-bold opacity-40 uppercase">Wind</p><p class="text-3xl font-black" x-text="weather.wind"></p></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Feed -->
+                <div class="space-y-5">
+                    <h2 class="text-2xl font-black text-slate-900 px-1" x-text="t[lang].alerts + location.name"></h2>
+                    <template x-for="h in allHazards" :key="h.id">
+                        <div class="bg-white border border-slate-100 rounded-[2.2rem] p-6 shadow-sm mb-4">
+                            <div class="flex justify-between items-start mb-3">
+                                <div class="shrink-0">
+                                    <span class="text-[9px] font-black bg-red-100 text-red-600 px-2.5 py-1 rounded-lg uppercase" x-text="h.category"></span>
+                                    <h4 class="text-xl font-black text-slate-900 mt-2" x-text="h.loc"></h4>
+                                </div>
+                            </div>
+                            <p class="text-[13px] text-slate-500 font-medium mb-5 leading-relaxed" x-text="h.desc"></p>
+                            
+                            <div x-show="h.alternate" class="mt-5 pt-4 border-t border-slate-50 flex items-start gap-3">
+                                <div class="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                                    <i data-lucide="route" class="w-4 h-4"></i>
+                                </div>
+                                <div>
+                                    <p class="text-[9px] font-black text-emerald-600 uppercase tracking-widest mb-0.5" x-text="t[lang].alternate"></p>
+                                    <p class="text-[12px] font-bold text-slate-700" x-text="h.alternate"></p>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Shelter Tab -->
+            <div x-show="activeTab === 'shelter'" class="fade-enter space-y-6">
+                <h2 class="text-3xl font-black text-slate-900 px-1" x-text="t[lang].shelters"></h2>
+                <div x-show="!isShelterLoading" class="grid gap-5 px-1 pb-10">
+                    <template x-for="s in shelters">
+                        <div class="bg-white border border-slate-100 rounded-[2rem] p-6 shadow-sm group active:scale-[0.98]">
+                            <h4 class="font-black text-slate-900 text-lg leading-tight" x-text="s.name"></h4>
+                            <p class="text-[10px] font-bold text-slate-400 mt-1 uppercase" x-text="s.type"></p>
+                            <div class="flex gap-3 mt-6">
+                                <a :href="'tel:'+s.phone" class="flex-1 py-4 bg-slate-100 text-slate-700 rounded-2xl font-black text-[11px] text-center uppercase" x-text="t[lang].btn.call"></a>
+                                <button @click="window.open(`https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`, '_blank')" class="flex-1 py-4 bg-slate-900 text-white rounded-2xl font-black text-[11px] uppercase" x-text="t[lang].btn.nav"></button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Call Tab -->
+            <div x-show="activeTab === 'call'" class="fade-enter space-y-6">
+                <h2 class="text-3xl font-black text-slate-900 px-1" x-text="t[lang].hotlines"></h2>
+                <div class="grid gap-4 pb-20">
+                    <template x-for="(num, key) in {p: '100', f: '101', a: '102', w: '1091', n: '112'}">
+                        <a :href="'tel:' + num" class="bg-white border border-slate-100 rounded-[2.2rem] p-6 flex items-center justify-between shadow-sm active:scale-95 transition-transform group">
+                            <div class="flex items-center gap-5">
+                                <div class="w-14 h-14 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center">
+                                    <i data-lucide="phone-call" class="w-6 h-6"></i>
+                                </div>
+                                <div>
+                                    <h4 class="font-black text-slate-900 text-lg leading-none" x-text="t[lang].hotlineLabels[key]"></h4>
+                                    <p class="text-slate-400 font-bold text-xs mt-2 uppercase tracking-widest" x-text="t[lang].btn.line + ': ' + num"></p>
+                                </div>
+                            </div>
+                            <i data-lucide="arrow-right" class="w-5 h-5 text-slate-200 group-hover:text-red-500 transition-colors"></i>
+                        </a>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Guide Tab -->
+            <div x-show="activeTab === 'info'" class="fade-enter space-y-6">
+                <h2 class="text-3xl font-black text-slate-900 px-1" x-text="t[lang].guide"></h2>
+                <div class="space-y-6 pb-20">
+                    <template x-for="(p, index) in t[lang].guidePoints">
+                        <div class="bg-white border border-slate-100 rounded-[2.5rem] p-8 shadow-sm">
+                            <div class="flex items-center gap-4 mb-4">
+                                <div class="w-10 h-10 bg-slate-900 text-white rounded-xl flex items-center justify-center font-black text-sm" x-text="'0'+(index+1)"></div>
+                                <h4 class="text-xl font-black text-slate-900" x-text="p.title"></h4>
+                            </div>
+                            <p class="text-slate-500 font-medium leading-relaxed" x-text="p.desc"></p>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </main>
+
+        <!-- Navigation -->
+        <nav class="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[500px] z-[100] nav-pill px-4 pt-4 pb-9 flex justify-between items-center shadow-2xl">
+            <button @click="switchTab('home')" :class="activeTab === 'home' ? 'active-tab' : 'text-slate-400'" class="flex-1 flex flex-col items-center gap-1.5"><i data-lucide="layout-grid" class="w-6 h-6"></i><span class="text-[9px] font-black uppercase" x-text="t[lang].nav.home"></span></button>
+            <button @click="switchTab('shelter')" :class="activeTab === 'shelter' ? 'active-tab' : 'text-slate-400'" class="flex-1 flex flex-col items-center gap-1.5"><i data-lucide="home" class="w-6 h-6"></i><span class="text-[9px] font-black uppercase" x-text="t[lang].nav.shelter"></span></button>
+            <button @click="openCamera()" class="emergency-btn w-16 h-16 rounded-full flex items-center justify-center text-white -translate-y-7 border-4 border-white shadow-2xl"><i data-lucide="camera" class="w-7 h-7"></i></button>
+            <button @click="switchTab('call')" :class="activeTab === 'call' ? 'active-tab' : 'text-slate-400'" class="flex-1 flex flex-col items-center gap-1.5"><i data-lucide="phone-forwarded" class="w-6 h-6"></i><span class="text-[9px] font-black uppercase" x-text="t[lang].nav.call"></span></button>
+            <button @click="switchTab('info')" :class="activeTab === 'info' ? 'active-tab' : 'text-slate-400'" class="flex-1 flex flex-col items-center gap-1.5"><i data-lucide="book-open" class="w-6 h-6"></i><span class="text-[9px] font-black uppercase" x-text="t[lang].nav.guide"></span></button>
+        </nav>
+
+        <!-- Camera UI -->
+        <div x-show="isReporting" x-cloak class="fixed inset-0 z-[200] bg-black flex flex-col p-5">
+            <div class="flex justify-between items-center text-white mb-6 pt-4">
+                <h3 class="text-xl font-black uppercase tracking-tighter" x-text="isVerifying ? t[lang].cam.verify : (isSelectingCategory ? t[lang].cam.classify : t[lang].cam.lens)"></h3>
+                <button @click="isReporting = false; if(cameraStream) cameraStream.getTracks().forEach(t=>t.stop());" class="w-12 h-12 bg-white/10 rounded-full flex items-center justify-center"><i data-lucide="x" class="w-6 h-6"></i></button>
+            </div>
+            
+            <div class="flex-1 rounded-[3.5rem] bg-zinc-900 overflow-hidden relative flex items-center justify-center shadow-inner">
+                <template x-if="!isCaptured"><video id="video-feed" autoplay playsinline class="w-full h-full object-cover"></video></template>
+                <template x-if="isCaptured"><img :src="capturedImage" class="w-full h-full object-cover"></template>
+                
+                <div x-show="isSelectingCategory && !isVerifying" class="absolute inset-0 bg-black/60 backdrop-blur-xl flex flex-col justify-end p-8 pb-16">
+                    <div class="grid grid-cols-2 gap-4">
+                        <template x-for="cat in t[lang].cats">
+                            <button @click="selectCategory(cat.label)" class="category-btn bg-white/10 p-6 rounded-[2.5rem] text-white flex flex-col items-center gap-4">
+                                <i :data-lucide="cat.icon" class="w-7 h-7"></i>
+                                <span class="text-[10px] font-black uppercase" x-text="cat.label"></span>
+                            </button>
+                        </template>
+                    </div>
+                </div>
+
+                <div x-show="isVerifying" class="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-10 backdrop-blur-2xl">
+                     <i data-lucide="satellite" class="w-20 h-20 text-red-500 animate-pulse mb-8"></i>
+                     <div class="w-full h-1 bg-white/10 rounded-full overflow-hidden mb-4">
+                         <div class="h-full bg-red-500 transition-all duration-500" :style="'width: ' + ((verificationStep + 1) * 25) + '%'"></div>
+                     </div>
+                     <p class="text-white font-black text-sm uppercase tracking-widest" x-text="t[lang].verifySteps[verificationStep]"></p>
+                </div>
+            </div>
+
+            <div x-show="!isCaptured && !isVerifying" class="py-12 flex flex-col items-center">
+                <button @click="capturePhoto()" class="w-22 h-22 bg-white rounded-full p-2"><div class="w-full h-full rounded-full border-4 border-black/10 bg-red-600"></div></button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
